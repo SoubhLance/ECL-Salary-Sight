@@ -1,288 +1,406 @@
-import { useState, useMemo } from 'react';
-import { motion } from 'framer-motion';
-import { Search, ChevronLeft, ChevronRight, Calendar, Building2, MapPin, Filter, X, CalendarDays } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { useEmployeeData } from '@/contexts/EmployeeDataContext';
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  MapPin,
+  Search,
+  FileSpreadsheet,
+} from "lucide-react";
 
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+
+import { fetchAllSalary } from "@/lib/salaryApi";
+
+const ITEMS_PER_PAGE = 10;
 const currentYear = new Date().getFullYear();
-const years = ['All Years', ...Array.from({ length: 5 }, (_, i) => String(currentYear - i))];
-const months = ['All Months', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const departments = ['All Departments', 'Mining', 'HR', 'Finance', 'Operations', 'IT'];
-const collieryAreas = ['All Areas', 'Rajmahal', 'Sonepur Bazari', 'Kunustoria', 'Sripur', 'Kajora'];
+const years = Array.from({ length: 5 }, (_, i) =>
+  String(currentYear - i)
+);
+
+const months = [
+  { label: "All Months", value: "All" },
+  { label: "January", value: "01" },
+  { label: "February", value: "02" },
+  { label: "March", value: "03" },
+  { label: "April", value: "04" },
+  { label: "May", value: "05" },
+  { label: "June", value: "06" },
+  { label: "July", value: "07" },
+  { label: "August", value: "08" },
+  { label: "September", value: "09" },
+  { label: "October", value: "10" },
+  { label: "November", value: "11" },
+  { label: "December", value: "12" },
+];
 
 const PayrollTab = () => {
-  const { employeeData } = useEmployeeData();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [rows, setRows] = useState<any[]>([]);
+  const [columns, setColumns] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
-  const [selectedMonth, setSelectedMonth] = useState('All Months');
-  const [selectedDepartment, setSelectedDepartment] = useState('All Departments');
-  const [selectedCollieryArea, setSelectedCollieryArea] = useState('All Areas');
+  const [selectedArea, setSelectedArea] = useState("All");
+  const [selectedMonth, setSelectedMonth] = useState("All");
+
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
 
-  const filteredData = useMemo(() => employeeData.filter((employee) => {
-    const matchesSearch =
-      employee.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      employee.code.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesYear = selectedYear === 'All Years' || employee.month?.includes(selectedYear);
-    const matchesMonth = selectedMonth === 'All Months' || employee.month?.startsWith(selectedMonth);
-    const matchesDepartment = selectedDepartment === 'All Departments' || employee.department === selectedDepartment;
-    const matchesCollieryArea = selectedCollieryArea === 'All Areas' || employee.collieryArea === selectedCollieryArea;
-    return matchesSearch && matchesYear && matchesMonth && matchesDepartment && matchesCollieryArea;
-  }), [employeeData, searchQuery, selectedYear, selectedMonth, selectedDepartment, selectedCollieryArea]);
+  /* ================= FETCH DATA ================= */
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const res = await fetchAllSalary(Number(selectedYear));
+        const data = res.data || [];
 
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
-  const paginatedData = filteredData.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+        setRows(data);
+
+        if (data.length > 0) {
+          setColumns(Object.keys(data[0]));
+        } else {
+          setColumns([]);
+        }
+      } catch (err) {
+        console.error("Payroll fetch failed:", err);
+        setRows([]);
+        setColumns([]);
+      } finally {
+        setLoading(false);
+        setCurrentPage(1);
+      }
+    };
+
+    loadData();
+  }, [selectedYear]);
+
+  /* ================= FILTERS ================= */
+  const filteredData = useMemo(() => {
+    return rows.filter((r) => {
+      const searchMatch =
+        r.person_no?.toString().includes(searchQuery) ||
+        r.name_of_employee
+          ?.toLowerCase()
+          .includes(searchQuery.toLowerCase());
+
+      const areaMatch =
+        selectedArea === "All" || r.personnel_area === selectedArea;
+
+      const monthMatch =
+        selectedMonth === "All" ||
+        (r.month_year &&
+          String(r.month_year).substring(5, 7) === selectedMonth);
+
+      return searchMatch && areaMatch && monthMatch;
+    });
+  }, [rows, searchQuery, selectedArea, selectedMonth]);
+
+  /* ================= PAGINATION ================= */
+  const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+  const paginatedRows = filteredData.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
   );
 
-  const resetFilters = () => {
-    setCurrentPage(1);
+  /* ================= FORMAT CELL VALUE ================= */
+  const formatCellValue = (value: any, columnName: string) => {
+    if (value === null || value === undefined) return "-";
+    
+    // Columns that are IDs/codes/numbers (bigint in DB) - should NOT have decimal formatting
+    const noDecimalColumns = [
+      'person_no',
+      'bank_account_number',
+      'pf_number',
+      'aadhar_no',
+      'for_period',
+      'non_practicing_allowance',
+      'npa_arrears',
+      'gardener_allowance',
+      'washing_allow_arr',
+      'medical_reim_nex_arr',
+      'attendance_bon_qtrly_adj',
+      'exgratia_adj',
+      'night_duty_allowat35',
+      'night_duty_allow_arr',
+      'rescue_allowance',
+      'rescue_allow_adj',
+      'rescue_allowance_arr',
+      'misc_adv_adjustnottouse',
+      'travel_assist_bharatbhram',
+      'travel_assist_bhrtbh_arr',
+      'home_ltc_nex',
+      'cmpf_refund',
+      'spec_reim_non_taxable',
+      'employee_pf',
+      'employee_vpf',
+      'professional_tax',
+      'income_tax',
+      'monthly_tax_paid_by_er',
+      'professional_tax_arr',
+      'mgmt_trainee_bond_dedn',
+      'ta_advance_recovery',
+      'company_bus',
+      'benevolent_fund_recovery',
+      'canteen_recovery',
+      'car_usage_recovery',
+      'natural_calamity_fund',
+      'ee_pf_contribution',
+      'cmps_ee_dedn',
+      'cmps_ee_dedn_arr',
+      'farewell_fund',
+      'school_bus',
+      'festival_ded',
+      'cil_relief_fund_dedn',
+      'mcl_relief_fund_dedn',
+      'rent_deduction_cla_coa',
+      'income_tax_adjhperks',
+      'court_deduction',
+      'ee_pf_cont_arr',
+      'ee_vpf_cont_arr',
+      'leave_without_pay',
+      'cprmsne_lo',
+      'club_deduction',
+      'cmoai_contribution',
+      'co_op_dednfixamt',
+      'co_op_soc_dedn',
+      'union_deduction',
+      'mandir_deduction',
+      'cmpf_arr',
+      'absences_days',
+      'ug_days',
+      'weekly_off',
+      'physical_attendance',
+      'rest_day',
+      'holiday',
+      'others',
+      'half_pay_leave',
+      'sick_leave',
+      'earned_leave',
+      'commuted_leave',
+      'special_leave_non_ex',
+      'study_leave',
+      'restricted_holiday',
+      'other_leaves',
+      'iod',
+      'maternity_leave',
+      'child_care_leave',
+      'cf_billable_arr',
+      'cf_absence_arr',
+      'cf_ug_days_arr',
+      'cf_weekly_off_arr',
+      'cf_phisical_att_arr',
+      'cf_rest_day_arr',
+      'cf_holiday_arr',
+      'cf_others_arr',
+      'cf_hpl_arr',
+      'cf_sl_arr',
+      'cf_el_arr',
+      'cf_cml_arr',
+      'cf_spl_nex_arr',
+      'night_shift_days',
+      'year'
+    ];
+    
+    // Special handling for person_no - pad to 8 digits
+    if (columnName === 'person_no') {
+      const numStr = String(value).trim();
+      if (!isNaN(Number(numStr)) && numStr !== '') {
+        return numStr.padStart(8, '0');
+      }
+      return value;
+    }
+    
+    // If column is in noDecimalColumns list, return as-is (no decimal formatting)
+    if (noDecimalColumns.includes(columnName)) {
+      return String(value);
+    }
+    
+    // Check if value is a number (including 0) - format with 2 decimals (for salary amounts)
+    if (typeof value === 'number') {
+      return value.toFixed(2);
+    }
+    
+    // Check if string is a valid number - format with 2 decimals (for salary amounts)
+    if (typeof value === 'string' && !isNaN(Number(value)) && value.trim() !== '') {
+      return Number(value).toFixed(2);
+    }
+    
+    return value;
   };
-
-  const clearAllFilters = () => {
-    setSearchQuery('');
-    setSelectedYear(String(currentYear));
-    setSelectedMonth('All Months');
-    setSelectedDepartment('All Departments');
-    setSelectedCollieryArea('All Areas');
-    setCurrentPage(1);
-  };
-
-  const hasActiveFilters = searchQuery || selectedYear !== String(currentYear) || selectedMonth !== 'All Months' || selectedDepartment !== 'All Departments' || selectedCollieryArea !== 'All Areas';
-
-  const activeFilterCount = [
-    searchQuery,
-    selectedYear !== String(currentYear) ? selectedYear : null,
-    selectedMonth !== 'All Months' ? selectedMonth : null,
-    selectedDepartment !== 'All Departments' ? selectedDepartment : null,
-    selectedCollieryArea !== 'All Areas' ? selectedCollieryArea : null,
-  ].filter(Boolean).length;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
       className="stat-card"
     >
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-foreground">Payroll Data</h2>
-          {activeFilterCount > 0 && (
-            <Badge variant="secondary" className="bg-primary/10 text-primary">
-              {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''} active
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearAllFilters}
-              className="text-muted-foreground hover:text-foreground gap-1"
-            >
-              <X className="w-4 h-4" />
-              Clear all
-            </Button>
-          )}
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-lg font-semibold">Payroll Data</h2>
+        <div className="text-sm text-muted-foreground">
+          {filteredData.length.toLocaleString()} records
         </div>
       </div>
 
-      {/* Filters Card */}
-      <div className="bg-muted/30 rounded-xl p-4 mb-6 border border-border/50">
-        <div className="flex items-center gap-2 mb-4">
-          <Filter className="w-4 h-4 text-primary" />
-          <span className="text-sm font-medium text-foreground">Filters</span>
+      {/* Filters */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <Input
+            placeholder="Search by name or code"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="pl-9"
+          />
         </div>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Search name or ID..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                resetFilters();
-              }}
-              className="pl-10 bg-background"
-            />
-          </div>
 
-          {/* Year Filter */}
-          <div className="space-y-1.5">
-            <Select
-              value={selectedYear}
-              onValueChange={(value) => {
-                setSelectedYear(value);
-                resetFilters();
-              }}
-            >
-              <SelectTrigger className="bg-background">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="w-4 h-4 text-muted-foreground" />
-                  <SelectValue placeholder="Select Year" />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                {years.map((year) => (
-                  <SelectItem key={year} value={year}>
-                    {year}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Month Filter */}
-          <div className="space-y-1.5">
-            <Select
-              value={selectedMonth}
-              onValueChange={(value) => {
-                setSelectedMonth(value);
-                resetFilters();
-              }}
-            >
-              <SelectTrigger className="bg-background">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-muted-foreground" />
-                  <SelectValue placeholder="Select Month" />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                {months.map((month) => (
-                  <SelectItem key={month} value={month}>
-                    {month}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Department Filter */}
-          <div className="space-y-1.5">
-            <Select
-              value={selectedDepartment}
-              onValueChange={(value) => {
-                setSelectedDepartment(value);
-                resetFilters();
-              }}
-            >
-              <SelectTrigger className="bg-background">
-                <div className="flex items-center gap-2">
-                  <Building2 className="w-4 h-4 text-muted-foreground" />
-                  <SelectValue placeholder="Select Department" />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                {departments.map((dept) => (
-                  <SelectItem key={dept} value={dept}>
-                    {dept}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Colliery Area Filter */}
-          <div className="space-y-1.5">
-            <Select
-              value={selectedCollieryArea}
-              onValueChange={(value) => {
-                setSelectedCollieryArea(value);
-                resetFilters();
-              }}
-            >
-              <SelectTrigger className="bg-background">
-                <div className="flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-muted-foreground" />
-                  <SelectValue placeholder="Select Area" />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                {collieryAreas.map((area) => (
-                  <SelectItem key={area} value={area}>
-                    {area}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left py-3 px-4 text-sm font-semibold text-foreground">Employee Code</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-foreground">Name</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-foreground">Department</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-foreground">Colliery Area</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-foreground">Month</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-foreground">Gross</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-foreground">Net</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paginatedData.map((employee, index) => (
-              <motion.tr
-                key={`${employee.code}-${employee.month}`}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.03, duration: 0.3 }}
-                className="table-row"
-              >
-                <td className="py-3 px-4 text-sm text-muted-foreground">{employee.code}</td>
-                <td className="py-3 px-4 text-sm font-medium text-foreground">{employee.name}</td>
-                <td className="py-3 px-4 text-sm text-muted-foreground">{employee.department}</td>
-                <td className="py-3 px-4 text-sm text-muted-foreground">{employee.collieryArea}</td>
-                <td className="py-3 px-4 text-sm text-muted-foreground">{employee.month}</td>
-                <td className="py-3 px-4 text-sm text-muted-foreground">{employee.gross}</td>
-                <td className="py-3 px-4 text-sm font-medium text-ecl-green">{employee.net}</td>
-              </motion.tr>
+        <Select value={selectedYear} onValueChange={setSelectedYear}>
+          <SelectTrigger>
+            <CalendarDays className="w-4 h-4 mr-2" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {years.map((y) => (
+              <SelectItem key={y} value={y}>
+                {y}
+              </SelectItem>
             ))}
-          </tbody>
-        </table>
+          </SelectContent>
+        </Select>
+
+        <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+          <SelectTrigger>
+            <CalendarDays className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Month" />
+          </SelectTrigger>
+          <SelectContent>
+            {months.map((m) => (
+              <SelectItem key={m.value} value={m.value}>
+                {m.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={selectedArea} onValueChange={setSelectedArea}>
+          <SelectTrigger>
+            <MapPin className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Area" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="All">All Areas</SelectItem>
+            {[...new Set(rows.map((r) => r.personnel_area).filter(Boolean))].map(
+              (area) => (
+                <SelectItem key={area} value={area}>
+                  {area}
+                </SelectItem>
+              )
+            )}
+          </SelectContent>
+        </Select>
       </div>
 
-      {filteredData.length === 0 && (
-        <div className="text-center py-8 text-muted-foreground">No records found</div>
-      )}
+      {/* TABLE - Supabase Style */}
+      <div className="border rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-border">
+            <thead>
+              <tr className="bg-muted/50">
+                {columns.map((col) => (
+                  <th
+                    key={col}
+                    className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap"
+                  >
+                    {col.replace(/_/g, " ")}
+                  </th>
+                ))}
+              </tr>
+            </thead>
 
-      {/* Pagination */}
-      <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
-        <span className="text-sm text-muted-foreground">
-          Showing {paginatedData.length} of {filteredData.length} records
-        </span>
+            <tbody className="bg-background divide-y divide-border">
+              {loading ? (
+                <tr>
+                  <td colSpan={columns.length} className="px-4 py-12 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                      <p className="text-sm text-muted-foreground">Loading...</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : paginatedRows.length === 0 ? (
+                <tr>
+                  <td colSpan={columns.length} className="px-4 py-12 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <FileSpreadsheet className="w-8 h-8 text-muted-foreground" />
+                      <p className="text-sm font-medium">No records found</p>
+                      <p className="text-xs text-muted-foreground">Try adjusting your filters</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                paginatedRows.map((row, i) => (
+                  <tr 
+                    key={i} 
+                    className="hover:bg-muted/30 transition-colors"
+                  >
+                    {columns.map((col) => (
+                      <td 
+                        key={col} 
+                        className="px-4 py-3 text-sm whitespace-nowrap text-foreground"
+                      >
+                        {formatCellValue(row[col], col)}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* PAGINATION */}
+      <div className="flex items-center justify-between mt-4">
+        <div className="text-sm text-muted-foreground">
+          Showing {paginatedRows.length} of {filteredData.length} results
+        </div>
+
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+          <Button
+            variant="outline"
+            size="sm"
             disabled={currentPage === 1}
-            className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+            onClick={() => setCurrentPage((p) => p - 1)}
           >
-            <ChevronLeft className="w-4 h-4 text-muted-foreground" />
-          </button>
-          <span className="text-sm text-muted-foreground">
+            <ChevronLeft className="w-4 h-4" />
+            Previous
+          </Button>
+
+          <div className="text-sm text-muted-foreground px-3">
             Page {currentPage} of {totalPages || 1}
-          </span>
-          <button
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
             disabled={currentPage === totalPages || totalPages === 0}
-            className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+            onClick={() => setCurrentPage((p) => p + 1)}
           >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          </button>
+            Next
+            <ChevronRight className="w-4 h-4" />
+          </Button>
         </div>
       </div>
     </motion.div>

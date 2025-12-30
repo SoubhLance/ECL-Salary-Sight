@@ -411,3 +411,27 @@ async def upload_salary_xlsx(file: UploadFile = File(...)):
         "employees_synced": len(employees_synced),
         "years_processed": results
     }
+
+@app.get("/salary/all/{year}")
+def get_all_salary(year: int):
+    table_name = f"salaryregister{year}"
+
+    if not table_exists(table_name):
+        raise HTTPException(status_code=404, detail=f"No data for year {year}")
+
+    session = SessionLocal()
+    try:
+        query = text(f"SELECT * FROM {table_name}")
+        rows = session.execute(query).mappings().all()
+
+        return {
+            "year": year,
+            "total_records": len(rows),
+            "data": rows
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        session.close()
