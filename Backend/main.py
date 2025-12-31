@@ -337,9 +337,46 @@ async def upload_salary_xlsx(file: UploadFile = File(...)):
         missing = required - set(df.columns)
         raise HTTPException(400, f"Missing required columns: {missing}")
 
-    df["month_year"] = pd.to_datetime(df["month_year"], errors="coerce")
+    # Store original values before conversion for debugging
+    original_month_year = df["month_year"].copy()
+    
+    # FIXED: Better date parsing that handles multiple formats
+    # Try parsing with different formats
+    df["month_year"] = pd.to_datetime(df["month_year"], format="mixed", errors="coerce")
+    
+    # If that fails, try specific format for "January 2025" style dates
     if df["month_year"].isna().any():
-        raise HTTPException(400, "Invalid dates found in month_year column")
+        # Try to parse as "Month YYYY" format
+        mask = df["month_year"].isna()
+        df.loc[mask, "month_year"] = pd.to_datetime(
+            original_month_year[mask], 
+            format="%B %Y",  # e.g., "January 2025"
+            errors="coerce"
+        )
+    
+    # Check if there are still invalid dates after all attempts
+    invalid_dates_mask = df["month_year"].isna()
+    if invalid_dates_mask.any():
+        # Get the ORIGINAL values (before conversion) to show what's actually in Excel
+        invalid_rows = df[invalid_dates_mask].index.tolist()[:5]  # Show first 5
+        original_values = original_month_year.iloc[invalid_rows].tolist()
+        
+        # Option 1: Drop rows with invalid dates and continue
+        print(f"Warning: Found {invalid_dates_mask.sum()} rows with invalid dates. Dropping them.")
+        df = df[~invalid_dates_mask].copy()
+        
+        # If all rows are invalid, raise error
+        if len(df) == 0:
+            raise HTTPException(
+                400, 
+                f"All rows have invalid dates. Sample original values at rows {invalid_rows}: {original_values}"
+            )
+        
+        # Option 2: Uncomment below to raise error instead of dropping
+        # raise HTTPException(
+        #     400, 
+        #     f"Invalid dates found in month_year column at rows: {invalid_rows}. Original values: {original_values}"
+        # )
     
     df["year"] = df["month_year"].dt.year
     df["month_year"] = df["month_year"].dt.strftime("%Y-%m-%d")
@@ -435,3 +472,199 @@ def get_all_salary(year: int):
 
     finally:
         session.close()
+    
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Invalid file type. Only .xlsx or .xls allowed")
+
+    try:
+        df = pd.read_excel(file.file)
+    except Exception as e:
+        raise HTTPException(400, f"Error reading Excel file: {str(e)}")
+
+    original_columns = df.columns.tolist()
+    
+    # Normalize column names
+    df.columns = (
+        df.columns.astype(str)
+        .str.lower()
+        .str.strip()
+        .str.replace(" ", "_", regex=False)
+        .str.replace("-", "_", regex=False)
+        .str.replace(".", "_", regex=False)
+        .str.replace("(", "", regex=False)
+        .str.replace(")", "", regex=False)
+        .str.replace("/", "_", regex=False)
+        .str.replace("\\", "_", regex=False)
+        .str.replace(":", "_", regex=False)
+        .str.replace(";", "_", regex=False)
+        .str.replace(",", "_", regex=False)
+        .str.replace("'", "", regex=False)
+        .str.replace('"', "", regex=False)
+        .str.replace("&", "and", regex=False)
+        .str.replace("%", "percent", regex=False)
+        .str.replace("#", "num", regex=False)
+        .str.replace("@", "at", regex=False)
+        .str.replace("+", "plus", regex=False)
+        .str.replace("*", "", regex=False)
+        .str.replace("=", "", regex=False)
+        .str.replace("<", "", regex=False)
+        .str.replace(">", "", regex=False)
+        .str.replace("?", "", regex=False)
+        .str.replace("!", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.replace("^", "", regex=False)
+        .str.replace("|", "_", regex=False)
+        .str.replace("[", "", regex=False)
+        .str.replace("]", "", regex=False)
+        .str.replace("{", "", regex=False)
+        .str.replace("}", "", regex=False)
+    )
+    
+    df.columns = df.columns.str.replace(r'_+', '_', regex=True)
+    df.columns = df.columns.str.strip('_')
+
+    rename_map = {
+        "name_of_employee": "employee_name",
+        "basic": "basic_salary",
+        "month": "month_year"
+    }
+    df.rename(columns=rename_map, inplace=True)
+    
+    column_order = []
+    for orig_col in original_columns:
+        normalized = (orig_col.lower().strip()
+                     .replace(" ", "_")
+                     .replace("-", "_")
+                     .replace(".", "_")
+                     .replace("(", "")
+                     .replace(")", "")
+                     .replace("/", "_")
+                     .replace("\\", "_")
+                     .replace(":", "_")
+                     .replace(";", "_")
+                     .replace(",", "_")
+                     .replace("'", "")
+                     .replace('"', "")
+                     .replace("&", "and")
+                     .replace("%", "percent")
+                     .replace("#", "num")
+                     .replace("@", "at")
+                     .replace("+", "plus")
+                     .replace("*", "")
+                     .replace("=", "")
+                     .replace("<", "")
+                     .replace(">", "")
+                     .replace("?", "")
+                     .replace("!", "")
+                     .replace("$", "")
+                     .replace("^", "")
+                     .replace("|", "_")
+                     .replace("[", "")
+                     .replace("]", "")
+                     .replace("{", "")
+                     .replace("}", ""))
+        import re
+        normalized = re.sub(r'_+', '_', normalized).strip('_')
+        final_col = rename_map.get(normalized, normalized)
+        column_order.append(final_col)
+
+    required = {"person_no", "month_year", "personnel_area"}
+    if not required.issubset(df.columns):
+        missing = required - set(df.columns)
+        raise HTTPException(400, f"Missing required columns: {missing}")
+
+    # FIXED: Better date parsing that handles multiple formats
+    # Try parsing with different formats
+    df["month_year"] = pd.to_datetime(df["month_year"], format="mixed", errors="coerce")
+    
+    # If that fails, try specific format for "January 2025" style dates
+    if df["month_year"].isna().any():
+        # Try to parse as "Month YYYY" format
+        mask = df["month_year"].isna()
+        df.loc[mask, "month_year"] = pd.to_datetime(
+            df.loc[mask, "month_year"], 
+            format="%B %Y",  # e.g., "January 2025"
+            errors="coerce"
+        )
+    
+    # Check if there are still invalid dates
+    invalid_dates = df[df["month_year"].isna()]
+    if not invalid_dates.empty:
+        # Show which rows have invalid dates for debugging
+        invalid_rows = invalid_dates.index.tolist()[:5]  # Show first 5
+        sample_values = df.loc[invalid_rows, "month_year"].tolist() if "month_year" in df.columns else []
+        raise HTTPException(
+            400, 
+            f"Invalid dates found in month_year column at rows: {invalid_rows}. Sample values: {sample_values}"
+        )
+    
+    df["year"] = df["month_year"].dt.year
+    df["month_year"] = df["month_year"].dt.strftime("%Y-%m-%d")
+    
+    if "year" not in column_order:
+        column_order.append("year")
+    
+    df = df[column_order]
+    
+    years = df["year"].unique()
+    
+    results = {}
+    employees_synced = set()
+    
+    for year in years:
+        year_int = int(year)
+        table_name = f"salaryregister{year_int}"
+        
+        year_data = df[df["year"] == year_int].copy()
+        
+        try:
+            if not table_exists(table_name):
+                column_definitions = {}
+                for col in year_data.columns:
+                    column_definitions[col] = infer_sql_type(year_data[col], col)
+
+                
+                create_salary_table(table_name, column_definitions)
+                results[year_int] = {
+                    "table": table_name,
+                    "status": "created",
+                    "rows": len(year_data)
+                }
+            else:
+                existing_cols = get_table_columns(table_name)
+                new_cols = set(year_data.columns) - existing_cols
+                
+                if new_cols:
+                    for col in new_cols:
+                        col_type = infer_sql_type(year_data[col], col)
+                        add_column(table_name, col, col_type)
+
+                
+                results[year_int] = {
+                    "table": table_name,
+                    "status": "updated",
+                    "rows": len(year_data),
+                    "new_columns": list(new_cols) if new_cols else []
+                }
+            
+            records = json_safe_records(year_data)
+            
+            unique_employees = set()
+            for record in records:
+                emp_key = f"{record.get('person_no')}_{record.get('personnel_area')}"
+                unique_employees.add(emp_key)
+                employees_synced.add(emp_key)
+            
+            insert_salary_register(table_name, records)
+            
+            results[year_int]["unique_employees"] = len(unique_employees)
+            
+        except Exception as e:
+            raise HTTPException(500, f"Error processing year {year_int}: {str(e)}")
+    
+    return {
+        "status": "success",
+        "total_rows_processed": len(df),
+        "employees_synced": len(employees_synced),
+        "years_processed": results
+    }
